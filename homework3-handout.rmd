@@ -1,0 +1,442 @@
+---
+title: "Homework 3"
+author: junfeng(231)
+date: "__Due on March 11, 2018 at 11:55 pm__"
+output:
+  pdf_document: default
+  word_document: default
+graphics: yes
+geometry: margin=0.75in
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, 
+                      cache=FALSE, 
+                      fig.align='center')
+indent1 = '    '      
+indent2 = paste(rep(indent1, 2), collapse='')
+indent3 = paste(rep(indent1, 3), collapse='')
+indent4 = paste(rep(indent1, 4), collapse='')
+```
+
+----------------------
+
+In this homework, the problems will be more computationally intensive than previous problems in this class.  You should expect some problems to take a couple of minutes to complete.  Re-knitting your file can take a long time so you should consider using `cache=TRUE` option in R chunks that involve code which takes a while to run.  
+
+Another option would be to complete some of the more computationally demanding problems in separate Rmd
+
+Following packages will be used in this homework.  Please install any packages that are not currently installed.
+
+```{r pkg, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(boot)
+library(e1071)
+library(cluster)
+library(NbClust)
+library(bmp)
+library(dplyr)
+library(imager)
+library(tree)
+library(randomForest)
+library(gbm)
+library(ROCR)
+```
+
+-------
+
+1. **Fundamentals of the bootstrap**
+
+    In the first part of this problem we will explore the fact that approximately 1/3 of the observations in a bootstrap sample are _out-of-bag_.  
+
+    #.  Given a sample of size $n$, what is the probability that any observation $j$ is _not_ in in a bootstrap sample? Express your answer as a function of $n$.  
+                       prob(n)=(1-1/n)^n
+
+    #. Compute the above probability for $n=1000$.
+                       prob(1000)=(1-1/1000)^1000=0.3676
+
+    #. Verify that your calculation is reasonable by resampling the numbers 1 to 1000 with replace and printing the number of missing observations.  Hint: use the `unique` and `length` functions to identify how many unique observations are in the sample.  
+                  
+```{r num1}
+data=c(1:1000)
+length(unique(sample(data,replace = TRUE)))
+```
+    Here we'll use the bootstrap to compute uncertainty about a parameter of interest.
+
+    #. As of November 18, an NBA basketball player, Robert Covington, had made 50 out of 101 three point shot attempts this season. This field goal percentage (0.495), would rank in the 10 ten all time for single season three point shooting.  Use bootstrap resampling on a sequence of 50 1's (makes) and 51 0's (misses).  For each bootstrap sample compute and save the sample mean (e.g. bootstrap FG% for the player).  Use 1000 bootstrap samples to plot a histogram of those values.  Compute the 95% bootstrap confidence interval for Robert Covington's "true" FG% using the `quantile` function in R.  Print the endpoints of this interval? Do you expect his season field goal percentage to be higher or lower than his current percentage, 0.495? Justify your answer using a statistical argument. 
+```{r num1.3}
+three_point=c()
+sum_mean=c()
+for (i in 1:50)
+{
+  three_point=c(three_point,1)
+}
+for(i in 51:101)
+{
+  three_point=c(three_point,0)
+}
+for(i in 1:1000)
+{
+sum_mean=c(sum_mean,mean(sample(three_point,replace = TRUE)))
+}
+hist(sum_mean)
+print(quantile(sum_mean,0.95))
+print(quantile(sum_mean)[-1][-1])
+```
+I expect he will have higher goal percentage than this current
+ Because it has high confidence that he will have more than 0.495. 
+--------
+
+2. **Clustering methods**. `Seeds` dataset contains various physical measurements of three different
+   types of seeds. Instead of constructing a classification model to predict
+   the type of seed, we will try to find if there are natural groupings using
+   clustering methods and see if the grouping correspond to types of seeds.
+
+```{r, indent=indent1}
+seeds = read.table('http://archive.ics.uci.edu/ml/machine-learning-databases/00236/seeds_dataset.txt')
+names(seeds) = c('area', 'perimeter', 'compactness', 'length', 
+                 'width', 'asymmetry', 'groovelength', 'type')
+
+seeds.label = factor(seeds$type)
+seeds.orig = seeds[,-ncol(seeds)]
+seeds = scale(seeds.orig)
+seeds = as.data.frame(seeds)
+seed.cluster=kmeans(seeds,centers = 3)
+seed.cluster$cluster
+seeds.label.vec=c()
+for(i in 1:length(seeds.label))
+{
+  seeds.label.vec=c(seeds.label.vec,seeds.label[i])}
+hist(seed.cluster$cluster)
+hist(seeds.label.vec)
+```
+             most correspond to the true type,even though 2 of  clusters has fewer than true label, and one has a little more
+    #. Use default settings in `prcomp()` to perform PCA and name the result `seeds.pca`. Summarize `seeds.pca` and state how much of the variance in `seeds` is explained by first three principal components. 
+    
+        The first three components explain such a large porportion of variance (i.e. information) of the data because the columns in `seeds` are closely related quantities: `area` would be function of `length` and `width`, etc.  As a result, some of the columns do not provide much additional information. Verify this claim by computing the correlation matrix between all predictor variables.
+```{r num2}
+seeds.pca=prcomp(seeds)
+seeds.pca.var=seeds.pca$sdev^2
+seeds.pca.pro=seeds.pca.var/sum(seeds.pca.var)
+sum(seeds.pca.pro[1:3])
+```
+  we can see that first three pca explained 0.9866825
+    #. **K-means clustering** Save the first two principle components `PC1` and `PC2` into a two-column data frame, call it `seeds.pc2`. Treat `seeds.pc2` as a new dataset which contains 88.98% information in `seeds`. We want to perform clustering based on `seeds.pc2`.
+```{r num22}
+seeds.pc2=data.frame(PC1=seeds.pca$x[,1],PC2=seeds.pca$x[,2])
+```
+  
+        #. Use `NbClust()` and `index=trcovw` to determine the best number of
+clusters. Describe what index `trcovw` is in plain words. Save the
+optimal number as `best.km`. What is the value of index being
+computed? (refer to [https://www.jstatsoft.org/article/view/v061i06/v61i06.pdf](https://www.jstatsoft.org/article/view/v061i06/v61i06.pdf)
+           
+```{r num23}
+best.km=NbClust(seeds.pc2,method='kmeans',index ="trcovw")$Best.nc[1]
+best.value=NbClust(seeds.pc2,method='kmeans',index ="trcovw")$Best.nc[2]
+best.km
+best.value
+```
+       the index which is cov to be calculated for  clustering.
+       
+        #. Set seed value by `set.seed(10)`. Use `kmeans()` and `best.km` to perform a k-means clustering. Use basic `plot()` function to visualize cluster assignments (use different colors to indicate different clusters) and use `points()` to mark the cluster centers.
+```{r num24}
+set.seed(10)
+kmeans.pc=kmeans(seeds.pc2,centers = 4)
+plot(seeds.pc2,col=kmeans.pc$cluster)
+points(kmeans.pc$centers,col='orange')
+```
+             
+             
+    #. **Hierachical clustering** Compare different linkages.
+             
+        #. Obtain the euclidean distance matrix for `seeds.pc2` and call it `dist.pc2`. 
+```{r num25}
+dist.pc2=dist(seeds.pc2)
+```
+           
+           
+        #. Use `NbClust()` and `index="all"` to determine the best number of clusters for a hierarchical clustering with **s**ingle linkage, **c**omplete linkage and **a**verage linkage, respectively. Call the best number of clusters `best.s`, `best.c` and `best.a`.
+```{r num26}
+Nb.s=NbClust(seeds.pc2,index = "all",method = "single")
+Nb.c=NbClust(seeds.pc2,index = "all",method = "complete")
+Nb.a=NbClust(seeds.pc2,index = "all",method = "average")
+best.s=Nb.s$Best.nc
+best.c=Nb.c$Best.nc
+best.a=Nb.a$Best.nc
+best.a
+best.s
+best.c
+```
+           
+             
+        #. Set seed value by `set.seed(10)`. Use `hclust()` to find three clustering results with different linkage functions. Name them `hc.s`, `hc.c` and `hc.a`. (Specify different linkage names in `method` to have hierarchical clustering results for single linkage, complete linkage and average linkage respectively). 
+        
+```{r num27}
+set.seed(10)
+hc.s=hclust(dist.pc2,method = "single")
+hc.a=hclust(dist.pc2,method = "average")
+hc.c=hclust(dist.pc2,method = "complete")
+```
+        #. Plot three dendrograms for `hc.s`, `hc.c` and `hc.a`. Give a clear title for each plot indicating which linkage was used to have the dendrogram. 
+```{r num28}
+plot(hc.s,  main='linkage single')
+plot(hc.a,main='linkage complete')
+plot(hc.c,main='linkage average')
+```
+
+        #. Cut the three dendrograms of `hc.s`, `hc.c` and `hc.a` so as to get `best.s`, `best.c` and `best.a` clusters, respectively (Hint: `cutree()`). Use basic `plot()` function to visualize each cluster assignments (use different colors to indicate different clusters).               
+```{r num29}
+best.s=cutree(hc.s,3)
+best.c=cutree(hc.c,3)
+best.a=cutree(hc.a,3)
+```
+           
+             
+        #. Use `NbClust()` with `index="ball"` to find best number of cluster
+           again. Show scatter plot of corresponding cluster assignments. [3]
+```{r num210}
+best.b=NbClust(seeds.pc2,index = "ball",method = "kmeans")$Best.nc
+plot(seeds.pc2,col=NbClust(seeds.pc2,index = "ball",method = "kmeans")$Best.partition)
+```
+             
+
+--------
+
+3. **PCA**. Bitmap image can be read in via the following command:
+
+```{r read-bitmap, indent=indent1}
+img = read.bmp('image1.bmp')
+img = t(img[ncol(img):1,])
+img = img - mean(img)
+```
+
+    Plot the image in grayscale:
+
+```{r plot-bitmap, indent=indent1}
+gs = grey((0:255)/255)
+image(img, asp=1, col=gs, yaxs='r', xaxt='n', yaxt='n')
+```
+
+    #. Using syntax `??[keyword]`, help pages can be searched for any pages
+    with `keyword` in it. Also, if there are same function names in multiple
+    packages, a package can be specified by `?[packagename]::[functionname]`.
+
+        Using the search method, find what the keyword `xaxt` and `yaxt` does
+        in the above `image()` function by looking up the appropriate help
+        page. 
+
+```{r num31}
+?image(xaxt)
+?image(yaxt)
+
+```
+yaxt='n' means no graduation like 1 ,2 ,3 ,4 in y axis,xaxt='n' means no graduation like 1,2,3,4 in x axis
+    #. Compute the principal components using `prcomp` and list objects in the
+    function output: i.e. `str` function would be useful.
+```{r num32}
+img.pc=prcomp(img,scale=FALSE,center = FALSE)
+str(img.pc)
+```
+
+    #. Recall that principal components are linear combination of data
+    columns.
+        $$ Z_i = \phi_{i1} X_1 + \phi_{i2} X_2 + \dots + \phi_{ip} X_p. $$
+        Verify that this is true by multiplying data matrix (original bitmap
+        image `img` or a.k.a $X$) by loadings (`pca.img$rotation` object or
+        a.k.a matrix of $\phi_{ij}$) and compare to computed principal
+        components (`pca.img$x` object or a.k.a $Z$'s): i.e. compute to verify
+        that 
+        $$ \|Z - X\Phi\|_F^2 \approx 0, \tag{up to numerical error}$$ 
+        where $\|M\|_F^2 = \sum_{i,j} M_{ij}^2$.
+
+     #. Check that `rotation` of the `prcomp` output is indeed a rotation
+     matrix, say $Q$, by verifying a crucial property of orthonormal rotation
+     matrices: i.e.
+     $$\|Q^T Q - I\|_F^2 \approx 0 \tag{up to numerical error}$$
+```{r num33}
+sum((img %*% img.pc$rotation-img.pc$x)^2)
+```
+hahahha, equals 0
+     #. This means we can approximately reconstruct original data using any
+    number of principal components we choose:
+    $$ Z\Phi^T - X\Phi\Phi^T = Z\Phi^T - X \approx Z[,1:m]\,\Phi[,1:m]^T - X $$
+    where $[,1:m]$ is `R` notation for taking submatrix of columns 1 through $m$.
+    
+        Using this fact, reconstruct the image from 10 and 100 principal
+        components and plot the reconstructed image.
+```{r num34}
+c=img.pc$rotation
+det(t(c) %*% c-diag(x=1,512,512))
+```
+```{r num35}
+s=img.pc$x[,10:100] %*% t(img.pc$rotation[,10:100])-img
+image(s, asp=1, col=gs, yaxs='r', xaxt='n', yaxt='n')
+```
+     #. Plot proportion of variance explained as function of number of
+     principal components and also cumulative proportional variance explained.
+     The function `summary` returns helpful objects including PVE.
+     
+
+        Using this information, find out how many principal components are
+        needed to explain 90\% of the variance.
+```{r num4}
+sum_pro=0
+img.pca.var=img.pc$sdev^2
+img.pca.pro=img.pca.var/sum(img.pca.var)
+num_pc=c(1:512)
+plot(num_pc,img.pca.pro,'o')
+for(i in 1:length(num_pc))
+{
+  sum_pro=sum_pro+img.pca.pro[i]
+  if(sum_pro>0.9){
+    print(i)
+    break
+  }
+    }
+```
+--------
+until 18th component explained 0.9 variance
+
+4. **Logistic regression with polynomial features**
+
+    #. In class, we have used polynomial linear regression several times as an example for model complexity and the bias variance tradeoff.  We can also introduce polynomial logistic regression models to derive more sophisticated classification functions by introducing additional features. Use `read_csv` to load `nonlinear.csv` and plot the data. Plot each point colored according to its class, `Y`.
+```{r num41}
+nolinear.csv=read_csv('nonlinear.csv')
+plot(nolinear.csv$X1,nolinear.csv$X2,col=ifelse(nolinear.csv$X1 %in% nolinear.csv$X1[nolinear.csv$Y==1],"red","green"),main="RED(Y==1),GREEN(Y==0)")
+```
+        
+    #.  Fit a logistic regression model of `Y` on `X1` and `X2`. Visualizing the decision boundary. The decision boundary can be visualized by making predictions of class labels over finely sampled grid
+    points that cover your region (sample space) of interest. The following code
+    will create grid points over the sample space as below:
+
+
+```{r num121}
+# grid of points over sample space
+gr <- expand.grid(X1=seq(-5, 5, by=0.1),  # sample points in X1
+                 X2=seq(-5, 5, by=0.1))  # sample points in X2
+gim.fit0=glm(Y~X1*X2,data=nolinear.csv,family =binomial)
+summary(gim.fit0)
+p=predict(gim.fit0,gr,type = "response")
+gr = gr %>%mutate(Y=as.factor(ifelse(p>0.4, "1", "0")))
+colo="black"
+colo[gr$Y==0]="red"
+colo[gr$Y==1]="black"
+plot(gr$X1,gr$X2,col=colo)
+```
+
+
+
+
+        For each point in `gr`, predict a class label using the logistic regression model.  You can classify based on the probability being greater or less than 0.4  Plot predictions at each point on the grid, again colored by class label.
+    
+
+    #. Fit a model involving 2nd degree polynomial of `X1` and `X2` with interaction terms. You should use the `poly()` function.  Inspect result of the fit using `summary()`. Plot the resulting decision boundary and discuss the result. 
+```{r num42}
+gim.fit1=glm(Y~poly(X1,2,raw=T)*poly(X2,2,raw=T),data=nolinear.csv,family =binomial)
+summary(gim.fit1)
+p=predict(gim.fit1,gr,type = "response")
+gr = gr %>%mutate(Y=as.factor(ifelse(p>0.4, "1", "0")))
+colo="black"
+colo[gr$Y==0]="red"
+colo[gr$Y==1]="black"
+plot(gr$X1,gr$X2,col=colo)
+```
+
+    #. Using the same procedure, fit a logistic regression model with 5-th degree polynomials without any ç. Inspect result of the fit using `summary()`.  Plot the resulting decision boundary and discuss the result. 
+```{r num43}
+ gim.fit2=glm(Y~poly(X1,5,raw=T)+poly(X2,5,raw=T),data=nolinear.csv,family =binomial)
+summary(gim.fit2)
+p=predict(gim.fit2,gr,type = "response")
+gr = gr %>%mutate(Y=as.factor(ifelse(p>0.4, "1", "0")))
+colo="black"
+colo[gr$Y==0]="red"
+colo[gr$Y==1]="black"
+plot(gr$X1,gr$X2,col=colo)
+
+```
+    #. Qualitatively, compare the relative magnitudes of
+      coefficients of iç and the linear model. What do you
+        notice? Your answer should mention bias, variance and/or overfitting.
+```{r num44}
+gim.fit0$coefficients
+gim.fit1$coefficients
+gim.fit2$coefficients
+```
+
+obviously,the magnititude of coefficient in the two polynimial models are relatively higher than in the linear model.
+So i think the polymonial models may have a relative low bias and high variance, and the linear model may have a relative low variance but high bias 
+    #. **(231 Only)**  Create 3 bootstrap replicates of the original dataset.  Fit the linear model and the 5th order polynomial to each of the bootstrap replicates.  Plot class predictions on the grid of values for each of both linear and 5th order fits, from each of the bootstrap samples.  There should be six plots total.  Discuss what you see in the context of your answer to the previous question. 
+```{r num45}
+set.seed(120)
+l=c(1:72)
+boot_sample1=gr[sample(l,replace = TRUE),]
+boot_sample2=gr[sample(l,replace = TRUE),]
+boot_sample3=gr[sample(l,replace = TRUE),]
+gim.fit_linear1=glm(Y~X1*X2,data=boot_sample1,family =binomial)
+label_linear1=predict(gim.fit_linear1,gr,type='response')
+gr = gr %>%mutate(Y=as.factor(ifelse(p>0.4, "1", "0")))
+colo="black"
+colo[gr$Y==0]="red"
+colo[gr$Y==1]="black"
+plot(gr$X1,gr$X2,col=colo)
+```
+```{r num46 }
+gim.fit_linear2=glm(Y~X1*X2,data=boot_sample2,family =binomial)
+label_linear2=predict(gim.fit_linear2,gr,type='response')
+gr = gr %>%mutate(Y=as.factor(ifelse(p>0.4, "1", "0")))
+colo="black"
+colo[gr$Y==0]="red"
+colo[gr$Y==1]="black"
+plot(gr$X1,gr$X2,col=colo)
+```
+```{r num47}
+gim.fit_linear3=glm(Y~X1*X2,data=boot_sample3,family =binomial)
+label_linear3=predict(gim.fit_linear3,gr,type='response')
+gr = gr %>%mutate(Y=as.factor(ifelse(p>0.4, "1", "0")))
+colo="black"
+colo[gr$Y==0]="red"
+colo[gr$Y==1]="black"
+plot(gr$X1,gr$X2,col=colo)
+```
+
+```{r num48}
+gim.fit_polynomial1=glm(Y~poly(X1,5,raw = T)+poly(X2,5,raw=T),data=boot_sample1,family =binomial)
+label_poly1=predict(gim.fit_polynomial1,gr,type='response')
+gr1 = gr %>%mutate(Y=as.factor(ifelse(p>0.4, "1", "0")))
+colo="black"
+colo[gr1$Y==0]="red"
+colo[gr1$Y==1]="black"
+plot(gr1$X1,gr1$X2,col=colo)
+```
+
+```{r num49 }
+gim.fit_polynomial2=glm(Y~poly(X1,5,raw=T)+poly(X2,5,raw=T),data=boot_sample2,family =binomial)
+label_poly2=predict(gim.fit_polynomial2,gr,type='response')
+gr1 = gr %>%mutate(Y=as.factor(ifelse(p>0.4, "1", "0")))
+colo="black"
+colo[gr1$Y==0]="red"
+colo[gr1$Y==1]="black"
+plot(gr1$X1,gr$X2,col=colo)
+```
+```{r num51}
+gim.fit_polynomial3=glm(Y~poly(X1,5,raw=T)+poly(X2,5,raw=T),data=boot_sample3,family =binomial)
+label_poly3=predict(gim.fit_polynomial3,gr,type='response')
+gr1 = gr %>%mutate(Y=as.factor(ifelse(p>0.4, "1", "0")))
+colo="black"
+colo[gr1$Y==0]="red"
+colo[gr1$Y==1]="black"
+plot(gr1$X1,gr$X2,col=colo)
+```
+```{r num6}
+summary(gim.fit_linear1)
+summary(gim.fit_linear2)
+summary(gim.fit_linear3)
+summary(gim.fit_polynomial1)
+summary(gim.fit_polynomial2)
+summary(gim.fit_polynomial3)
+```
+First,we can see from the gim.fit$cofficient. The magnititude of coefficient in the linear models (both sample1~3) are both relative smaller than the three polynomial models.
+Then we view the plots, we can see that the plots which represent polynomial model are more flexible than the linear models.
+So we can get from all above, that the polynomial models have larger variance but smaller bias than the linear models
+
